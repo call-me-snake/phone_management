@@ -1,0 +1,19 @@
+version: '3.5'
+
+services:
+
+ adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+
+ db:
+    image: postgr_storage_img
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: phone_storage
+      POSTGRES_USER: postgres

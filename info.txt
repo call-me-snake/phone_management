@@ -1,0 +1,2 @@
+//команда для Mockgen
+mockgen "-source=internal/model/iPhoneStorage.go" "-destination=internal/model/mock/mock_phoneStorage.go"
