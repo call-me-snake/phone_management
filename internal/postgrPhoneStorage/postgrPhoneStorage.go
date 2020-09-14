@@ -99,12 +99,15 @@ func (db *storage) CreateOwner(data model.PhoneOwner) error {
 }
 
 //UpdatePhone реализует функцию интерфейса IPhoneStorage
-func (db *storage) UpdatePhone(data model.PhoneOwner) error {
-	query := db.database.Model(&model.PhoneOwner{}).Update(data)
+func (db *storage) UpdatePhone(data model.PhoneOwner) (isUpdated bool, err error) {
+	query := db.database.Model(&model.PhoneOwner{}).Where("name = ?", data.Name).Update(data)
 	if query.Error != nil {
-		return fmt.Errorf("UpdatePhone: %v", query.Error)
+		return false, fmt.Errorf("UpdatePhone: %v", query.Error)
 	}
-	return nil
+	if query.RowsAffected == 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 //DeleteOwner реализует функцию интерфейса IPhoneStorage

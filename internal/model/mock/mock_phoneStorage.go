@@ -64,11 +64,12 @@ func (mr *MockIPhoneStorageMockRecorder) CreateOwner(data interface{}) *gomock.C
 }
 
 // UpdatePhone mocks base method.
-func (m *MockIPhoneStorage) UpdatePhone(data model.PhoneOwner) error {
+func (m *MockIPhoneStorage) UpdatePhone(data model.PhoneOwner) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdatePhone", data)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // UpdatePhone indicates an expected call of UpdatePhone.

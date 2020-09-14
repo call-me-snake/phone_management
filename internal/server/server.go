@@ -46,6 +46,7 @@ func (c *Connector) executeHandlers(db model.IPhoneStorage, keyDb model.IKeyStor
 	c.router.HandleFunc("/ready", aliveHandler).Methods("GET")
 	c.router.HandleFunc(`/getphone/{name:[\w-]+}`, getPhoneByName(db)).Methods("GET") //[\w-]+ regexp для символов [0-9A-Za-z_-]
 	c.router.HandleFunc("/sendsms", sendSms(keyDb)).Methods("POST")
+	c.router.HandleFunc("/attachphone", attachNewPhone(db, keyDb)).Methods("POST")
 }
 
 //Start запуск http сервера
@@ -124,8 +125,7 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 			return
 		}
 
-		//проверка бана пользователя. Пользователь банится от запросов при смене номера на час
-		//TODO вписать переменную окр
+		//проверка бана пользователя. Пользователь банится от запросов при смене номера на время model.BanKeyLifeSpan
 		userBannedKey := BanKeyPrefix + user.UserId
 		banned, err := keyDb.GetIntValueByKey(userBannedKey)
 		if err != nil {
@@ -140,12 +140,11 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 				log.Printf("sendSms: %s", err.Error())
 				return
 			}
-			http.Error(w, fmt.Sprintf("Количество запросов было превышено. Получение кода будет доступно через %s", timeout), http.StatusForbidden)
+			http.Error(w, fmt.Sprintf("Количество запросов кода было превышено. Получение кода будет доступно через %s", timeout), http.StatusForbidden)
 			return
 		}
 
-		//проверка ограничения пользователя. Ограничение накладывается на минуту при получении смс
-		//TODO вписать переменную окр
+		//проверка ограничения пользователя. Ограничение накладывается на время model.SuspendTimeout при получении смс
 		userSuspendedKey := SuspendKeyPrefix + user.UserId
 		suspended, err := keyDb.GetIntValueByKey(userSuspendedKey)
 		if err != nil {
@@ -217,7 +216,8 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 	}
 }
 
-//attachNewPhone -
+//attachNewPhone - привязывает новый телефон к пользователю, обновляет данные в базе
+//Пример нормального тела запроса: {"UserId":"user1","Phone":"71234567890","Code":5555}
 func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := &model.AttachNewPhoneRequestJson{}
@@ -232,8 +232,97 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 			return
 		}
 
-		//проверка превышения попыток ввода в час
+		//проверка превышения попыток ввода кода в течение времени model.AttemptsKeyLifeSpan
+		userAttemptsLeft := AttemptsLeftPrefix + user.UserId
+		attempts, err := keyDb.GetIntValueByKey(userAttemptsLeft)
+		if err != nil {
+			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+			log.Printf("attachNewPhone: %s", err.Error())
+			return
+		}
 
+		if attempts != nil && *attempts <= 0 {
+			timeout, err := returnTimeoutInString(userAttemptsLeft, keyDb)
+			if err != nil {
+				http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+				log.Printf("attachNewPhone: %s", err.Error())
+				return
+			}
+			http.Error(w, fmt.Sprintf("Количество попыток ввода кода было превышено. Снятие временного бана через %s", timeout), http.StatusForbidden)
+			return
+		}
+
+		//Проверка существования кода в базе и сравнение с данными запроса
+		userSmsKey := SmsKeyPrefix + user.UserId + ":" + user.PhoneNumber
+		kode, err := keyDb.GetIntValueByKey(userSmsKey)
+		if err != nil {
+			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+			log.Printf("attachNewPhone: %s", err.Error())
+			return
+		}
+		//код истек и был удален из базы
+		if kode == nil {
+			http.Error(w, "Время жизни кода истекло", http.StatusForbidden)
+			return
+		}
+		//код неверен
+		if *kode != user.Code {
+			switch {
+			case attempts == nil:
+				err = keyDb.SetTempIntKey(userAttemptsLeft, model.AttemptsOfInput-1, model.AttemptsKeyLifeSpan)
+				if err != nil {
+					log.Printf("attachNewPhone: %s", err.Error())
+					http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+					return
+				}
+			case attempts != nil:
+				attemptsLeft, err := keyDb.DecrKey(userAttemptsLeft)
+				if err != nil {
+					http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+					log.Printf("attachNewPhone: %s", err.Error())
+					return
+				}
+				if attemptsLeft < 0 {
+					http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+					log.Printf("sendSms: attemptsLeft < 0, attemptsLeft = %d (Результат функции IKeyStorage.DecrKey не должен становиться < 0)", attemptsLeft)
+					return
+				}
+			}
+			http.Error(w, "Код неверен", http.StatusForbidden)
+			return
+		}
+		//код верен
+		phoneOwner := model.PhoneOwner{Name: user.UserId, PhoneNumber: user.PhoneNumber}
+		updated, err := db.UpdatePhone(phoneOwner)
+		if err != nil {
+			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+			log.Printf("attachNewPhone: %s", err.Error())
+			return
+		}
+		//записи не существует? Пробуем создать самостоятельно
+		if updated == false {
+			err = db.CreateOwner(phoneOwner)
+		}
+		if err != nil {
+			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
+			log.Printf("attachNewPhone: %s", err.Error())
+			return
+		}
+
+		//установка временного бана после успешного обновления записи
+		userBannedKey := BanKeyPrefix + user.UserId
+		err = keyDb.SetTempIntKey(userBannedKey, 1, model.BanKeyLifeSpan)
+		//сам номер мы сменили успешно, поэтому необычную ошибку я логирую, а пользователю возвращаю сообщение о смене номера
+		if err != nil {
+			log.Printf("attachNewPhone: %s", err.Error())
+		}
+
+		respMessage := model.AttachNewPhoneResponseJson{
+			SendSmsRequestJson: user.SendSmsRequestJson,
+		}
+		resp, _ := json.Marshal(respMessage)
+		w.Header().Set("content-type", "application/json")
+		w.Write(resp)
 	}
 }
 
