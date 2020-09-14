@@ -24,7 +24,7 @@ func main() {
 		//	log.Print(err.Error())
 		//}
 	*/
-	keydb, err := redisKeyStorage.New("localhost:6379")
+	keydb, err := redisKeyStorage.New(":6379")
 	if err != nil {
 		log.Fatal(err.Error())
 		return

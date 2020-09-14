@@ -139,3 +139,11 @@ func (db *storage) DecrKey(key string) (int64, error) {
 	}
 	return i, nil
 }
+
+func (db *storage) DelKey(key string) error {
+	err := db.rdb.Del(ctx, key).Err()
+	if err != nil {
+		return fmt.Errorf("redisKeyStorage.DelKey: %v", err)
+	}
+	return nil
+}

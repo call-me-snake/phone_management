@@ -267,6 +267,7 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 		}
 		//код неверен
 		if *kode != user.Code {
+			var attemptsLeft int64 = int64(model.AttemptsOfInput)
 			switch {
 			case attempts == nil:
 				err = keyDb.SetTempIntKey(userAttemptsLeft, model.AttemptsOfInput-1, model.AttemptsKeyLifeSpan)
@@ -276,7 +277,7 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 					return
 				}
 			case attempts != nil:
-				attemptsLeft, err := keyDb.DecrKey(userAttemptsLeft)
+				attemptsLeft, err = keyDb.DecrKey(userAttemptsLeft)
 				if err != nil {
 					http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 					log.Printf("attachNewPhone: %s", err.Error())
@@ -288,7 +289,7 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 					return
 				}
 			}
-			http.Error(w, "Код неверен", http.StatusForbidden)
+			http.Error(w, fmt.Sprintf("Код неверен. Осталось попыток ввода: %d", attemptsLeft), http.StatusForbidden)
 			return
 		}
 		//код верен
@@ -313,6 +314,17 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 		userBannedKey := BanKeyPrefix + user.UserId
 		err = keyDb.SetTempIntKey(userBannedKey, 1, model.BanKeyLifeSpan)
 		//сам номер мы сменили успешно, поэтому необычную ошибку я логирую, а пользователю возвращаю сообщение о смене номера
+		if err != nil {
+			log.Printf("attachNewPhone: %s", err.Error())
+		}
+
+		//удаление ключа неверных попыток
+		err = keyDb.DelKey(userAttemptsLeft)
+		if err != nil {
+			log.Printf("attachNewPhone: %s", err.Error())
+		}
+		//удаление смс кода
+		err = keyDb.DelKey(userSmsKey)
 		if err != nil {
 			log.Printf("attachNewPhone: %s", err.Error())
 		}

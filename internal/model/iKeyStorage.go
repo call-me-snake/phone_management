@@ -10,4 +10,5 @@ type IKeyStorage interface {
 	SetTempIntKeyOnTimeStamp(key string, value int, timestamp time.Time) error
 	GetKeyLifeRest(key string) (*time.Duration, error)
 	DecrKey(key string) (int64, error)
+	DelKey(key string) error
 }
