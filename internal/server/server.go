@@ -18,11 +18,13 @@ import (
 
 const BadRequestMessage = "Некорректные входные данные"
 const InternalErrorMessage = "Внутренняя ошибка сервера"
+const BadPhoneFormat = "Некорректный формат телефона"
 
 const BanKeyPrefix = "Banned:"         //Префикс для сохранения ключа временного бана в формате Banned:UserId
-const AttemptsLeftPrefix = "Attempts:" //Префикс для сохранения ключа количества оставшихся попыток в формате Attempts:UserId
+const RequestsLeftPrefix = "Requests:" //Префикс для сохранения ключа количества оставшихся запросов в формате Requests:UserId
 const SuspendKeyPrefix = "Suspend:"    //Префикс для сохранения ключа временного таймаута в формате Suspend:UserId
 const SmsKeyPrefix = "SmsKey:"         //Префикс для сохранения ключа временного кода в формате SmsKey:UserId:Phone
+const AttemptsLeftPrefix = "Attempts:" //Префикс для сохранения ключа количества оставшихся попыток ввода ключа в формате Attempts:UserId
 
 const defaultSmsKey = 5555 //Временный код для режима тестирования
 
@@ -103,21 +105,21 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 			return
 		}
 		if user.PhoneNumber, err = validate.ValidatePhone(user.PhoneNumber); err != nil {
-			http.Error(w, "Некорректный формат телефона", http.StatusBadRequest)
+			http.Error(w, BadPhoneFormat, http.StatusBadRequest)
 			log.Printf("sendSms: %s", err.Error())
 			return
 		}
 
-		//проверка превышения количества попыток в сутки
-		userAttemptsLeft := AttemptsLeftPrefix + user.UserId
-		attempts, err := keyDb.GetIntValueByKey(userAttemptsLeft)
+		//проверка превышения количества запросов в сутки
+		userRequestsLeft := RequestsLeftPrefix + user.UserId
+		requests, err := keyDb.GetIntValueByKey(userRequestsLeft)
 		if err != nil {
 			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 			log.Printf("sendSms: %s", err.Error())
 			return
 		}
 
-		if attempts != nil && *attempts <= 0 {
+		if requests != nil && *requests <= 0 {
 			http.Error(w, "Количество запросов смс в сутки было превышено.", http.StatusForbidden)
 			return
 		}
@@ -138,11 +140,11 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 				log.Printf("sendSms: %s", err.Error())
 				return
 			}
-			http.Error(w, fmt.Sprintf("Количество попыток ввода было превышено. Получение кода будет доступно через %s", timeout), http.StatusForbidden)
+			http.Error(w, fmt.Sprintf("Количество запросов было превышено. Получение кода будет доступно через %s", timeout), http.StatusForbidden)
 			return
 		}
 
-		//проверка ограничения пользователя. Ограничение накладывается при получении смс на минуту
+		//проверка ограничения пользователя. Ограничение накладывается на минуту при получении смс
 		//TODO вписать переменную окр
 		userSuspendedKey := SuspendKeyPrefix + user.UserId
 		suspended, err := keyDb.GetIntValueByKey(userSuspendedKey)
@@ -170,25 +172,25 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 			return
 		}
 
-		//установка ключа количества попыток, или его уменьшение
-		var attemptsLeft int64
+		//установка ключа количества оставшихся запросов, или его уменьшение
+		var requestsLeft int64
 		switch {
-		case attempts != nil:
-			attemptsLeft, err = keyDb.DecrKey(userAttemptsLeft)
+		case requests != nil:
+			requestsLeft, err = keyDb.DecrKey(userRequestsLeft)
 			if err != nil {
 				http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 				log.Printf("sendSms: %s", err.Error())
 				return
 			}
-			//если attemptsLeft<0, значит что-то пошло не так. Оно не должно быть <0 в нормальных условиях. Логирую
-			if attemptsLeft < 0 {
+			//если requestsLeft<0, значит что-то пошло не так. Оно не должно быть <0 в нормальных условиях. Логирую
+			if requestsLeft < 0 {
 				http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
-				log.Printf("sendSms: attemptsLeft < 0, attemptsLeft = %d (Результат функции IKeyStorage.DecrKey не должен становиться < 0)", attemptsLeft)
+				log.Printf("sendSms: requestsLeft < 0, requestsLeft = %d (Результат функции IKeyStorage.DecrKey не должен становиться < 0)", requestsLeft)
 				return
 			}
-		case attempts == nil:
-			attemptsLeft = int64(model.TriesPerDay - 1)
-			err = keyDb.SetTempIntKeyOnTimeStamp(userAttemptsLeft, model.TriesPerDay-1, helpers.GetNextDayDate())
+		case requests == nil:
+			requestsLeft = int64(model.TriesPerDay - 1)
+			err = keyDb.SetTempIntKeyOnTimeStamp(userRequestsLeft, model.TriesPerDay-1, helpers.GetNextDayDate())
 			if err != nil {
 				http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 				log.Printf("sendSms: %s", err.Error())
@@ -206,12 +208,32 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 		respMessage := model.SendSmsResponseJson{
 			SendSmsRequestJson: *user,
 			CodeLifeTime:       model.SmsKeyLifeSpan.String(),
-			AttemptsLeft:       attemptsLeft,
+			RequestsLeft:       requestsLeft,
 		}
 
 		resp, _ := json.Marshal(respMessage)
 		w.Header().Set("content-type", "application/json")
 		w.Write(resp)
+	}
+}
+
+//attachNewPhone -
+func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := &model.AttachNewPhoneRequestJson{}
+		err := json.NewDecoder(r.Body).Decode(user)
+		if err != nil || user.UserId == "" {
+			http.Error(w, BadRequestMessage, http.StatusBadRequest)
+			return
+		}
+		if user.PhoneNumber, err = validate.ValidatePhone(user.PhoneNumber); err != nil {
+			http.Error(w, BadPhoneFormat, http.StatusBadRequest)
+			log.Printf("attachNewPhone: %s", err.Error())
+			return
+		}
+
+		//проверка превышения попыток ввода в час
+
 	}
 }
 
