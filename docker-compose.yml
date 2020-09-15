@@ -1,0 +1,46 @@
+version: '3.5'
+
+services:
+
+ adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+
+ db:
+    image: postgr_storage_img
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: phone_storage
+      POSTGRES_USER: postgres
+
+ keydb:
+    image: redis:latest
+    restart: always
+    ports:
+      - 6379:6379
+
+ phone_management:
+    image: phone_management_img
+    restart: always
+    ports:
+      - 8081:8081
+    environment:
+      SERVER: :8081
+      PHONE_STORAGE: "user=postgres password=example dbname=phone_storage sslmode=disable port=5432 host=db"
+      KEY_STORAGE: keydb:6379
+      SUSPEND_TIMEOUT: 1m
+      SMSKEY_LIFESPAN: 15m
+      ATTEMPTS_KEY_LIFESPAN: 1h
+      BAN_KEY_LIFESPAN: 1h
+      TRIES_PER_DAY: 3
+      INPUT_ATTEMPTS: 3
+    depends_on:
+      - db
+      - keydb
+    command:  /bin/sh -c "dockerize -wait tcp://db:5432 -timeout 30s && dockerize -wait tcp://keydb:6379 -timeout 30s && /app"
+

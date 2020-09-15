@@ -1,7 +1,6 @@
 package redisKeyStorage
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
@@ -13,7 +12,7 @@ import (
 //sleepDurationInSec - время пинга функции checkConnection в секундах
 const sleepDurationInSec = 5
 
-var ctx = context.Background()
+//var ctx = context.Background()
 
 //storage ...
 type storage struct {
@@ -38,7 +37,7 @@ func New(address string) (model.IKeyStorage, error) {
 
 //ping - внутренняя функция проверки соединения
 func (db *storage) ping() error {
-	pong, err := db.rdb.Ping(ctx).Result()
+	pong, err := db.rdb.Ping().Result()
 	if err != nil {
 		return fmt.Errorf("redisKeyStorage.ping: %v", err)
 	}
@@ -61,7 +60,7 @@ func (db *storage) checkConnection() {
 					Password: "",
 					DB:       0,
 				})
-				if pong, err := tempDb.Ping(context.Background()).Result(); err != nil || pong != "PONG" {
+				if pong, err := tempDb.Ping().Result(); err != nil || pong != "PONG" {
 					log.Printf("redisKeyStorage.checkConnection: coud not establish connection: err=%s,ping=%s", err.Error(), pong)
 				} else {
 					db.rdb = tempDb
@@ -74,7 +73,7 @@ func (db *storage) checkConnection() {
 
 //GetStringValueByKey - получить строковое значение по ключу
 func (db *storage) GetStringValueByKey(key string) (*string, error) {
-	get := db.rdb.Get(ctx, key)
+	get := db.rdb.Get(key)
 	if err := get.Err(); err != nil {
 		if err == redis.Nil {
 			return nil, nil
@@ -87,7 +86,7 @@ func (db *storage) GetStringValueByKey(key string) (*string, error) {
 
 //GetIntValueByKey - получить значение типа int по ключу
 func (db *storage) GetIntValueByKey(key string) (*int, error) {
-	i, err := db.rdb.Get(ctx, key).Int()
+	i, err := db.rdb.Get(key).Int()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, nil
@@ -99,7 +98,7 @@ func (db *storage) GetIntValueByKey(key string) (*int, error) {
 
 //SetTempIntKey - установить временный ключ типа int, уничтожающийся по истечению timeout
 func (db *storage) SetTempIntKey(key string, value int, timeout time.Duration) error {
-	err := db.rdb.Set(ctx, key, value, timeout).Err()
+	err := db.rdb.Set(key, value, timeout).Err()
 	if err != nil {
 		return fmt.Errorf("redisKeyStorage.SetTempIntKey: %v", err)
 	}
@@ -108,11 +107,11 @@ func (db *storage) SetTempIntKey(key string, value int, timeout time.Duration) e
 
 //SetTempIntKeyOnTimeStamp - установить временный ключ типа int, уничтожающийся с наступлением timestamp
 func (db *storage) SetTempIntKeyOnTimeStamp(key string, value int, timestamp time.Time) error {
-	err := db.rdb.Set(ctx, key, value, 0).Err()
+	err := db.rdb.Set(key, value, 0).Err()
 	if err != nil {
 		return fmt.Errorf("redisKeyStorage.SetTempIntKeyOnTimeStamp: %v", err)
 	}
-	db.rdb.ExpireAt(ctx, key, timestamp).Err()
+	db.rdb.ExpireAt(key, timestamp).Err()
 	if err != nil {
 		return fmt.Errorf("redisKeyStorage.SetTempIntKeyOnTimeStamp: %v", err)
 	}
@@ -121,7 +120,7 @@ func (db *storage) SetTempIntKeyOnTimeStamp(key string, value int, timestamp tim
 
 //GetKeyLifeRest - получить остаток жизни ключа
 func (db *storage) GetKeyLifeRest(key string) (*time.Duration, error) {
-	timeRest, err := db.rdb.TTL(ctx, key).Result()
+	timeRest, err := db.rdb.TTL(key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redisKeyStorage.GetKeyLifeRest: %v", err)
 	}
@@ -133,7 +132,7 @@ func (db *storage) GetKeyLifeRest(key string) (*time.Duration, error) {
 
 //DecrKey - уменьшает значение ключа на 1
 func (db *storage) DecrKey(key string) (int64, error) {
-	i, err := db.rdb.Decr(ctx, key).Result()
+	i, err := db.rdb.Decr(key).Result()
 	if err != nil {
 		return i, fmt.Errorf("redisKeyStorage.DecrKey: %v", err)
 	}
@@ -141,7 +140,7 @@ func (db *storage) DecrKey(key string) (int64, error) {
 }
 
 func (db *storage) DelKey(key string) error {
-	err := db.rdb.Del(ctx, key).Err()
+	err := db.rdb.Del(key).Err()
 	if err != nil {
 		return fmt.Errorf("redisKeyStorage.DelKey: %v", err)
 	}

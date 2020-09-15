@@ -50,9 +50,10 @@ func (c *Connector) executeHandlers(db model.IPhoneStorage, keyDb model.IKeyStor
 }
 
 //Start запуск http сервера
-func (c *Connector) Start(db model.IPhoneStorage, keyDb model.IKeyStorage) {
+func (c *Connector) Start(db model.IPhoneStorage, keyDb model.IKeyStorage) error {
 	c.executeHandlers(db, keyDb)
-	http.ListenAndServe(c.address, c.router)
+	err := http.ListenAndServe(c.address, c.router)
+	return fmt.Errorf("server.Start: %v", err)
 }
 
 func aliveHandler(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +165,7 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 		}
 
 		//установка ограничения
-		err = keyDb.SetTempIntKey(userSuspendedKey, 1, model.SuspendTimeout)
+		err = keyDb.SetTempIntKey(userSuspendedKey, 1, model.C.SuspendTimeout)
 		if err != nil {
 			http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 			log.Printf("sendSms: %s", err.Error())
@@ -188,8 +189,8 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 				return
 			}
 		case requests == nil:
-			requestsLeft = int64(model.TriesPerDay - 1)
-			err = keyDb.SetTempIntKeyOnTimeStamp(userRequestsLeft, model.TriesPerDay-1, helpers.GetNextDayDate())
+			requestsLeft = int64(model.C.TriesPerDay - 1)
+			err = keyDb.SetTempIntKeyOnTimeStamp(userRequestsLeft, model.C.TriesPerDay-1, helpers.GetNextDayDate())
 			if err != nil {
 				http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
 				log.Printf("sendSms: %s", err.Error())
@@ -206,7 +207,7 @@ func sendSms(keyDb model.IKeyStorage) http.HandlerFunc {
 
 		respMessage := model.SendSmsResponseJson{
 			SendSmsRequestJson: *user,
-			CodeLifeTime:       model.SmsKeyLifeSpan.String(),
+			CodeLifeTime:       model.C.SmsKeyLifeSpan.String(),
 			RequestsLeft:       requestsLeft,
 		}
 
@@ -267,10 +268,10 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 		}
 		//код неверен
 		if *kode != user.Code {
-			var attemptsLeft int64 = int64(model.AttemptsOfInput)
+			var attemptsLeft int64 = int64(model.C.AttemptsOfInput)
 			switch {
 			case attempts == nil:
-				err = keyDb.SetTempIntKey(userAttemptsLeft, model.AttemptsOfInput-1, model.AttemptsKeyLifeSpan)
+				err = keyDb.SetTempIntKey(userAttemptsLeft, model.C.AttemptsOfInput-1, model.C.AttemptsKeyLifeSpan)
 				if err != nil {
 					log.Printf("attachNewPhone: %s", err.Error())
 					http.Error(w, InternalErrorMessage, http.StatusInternalServerError)
@@ -312,7 +313,7 @@ func attachNewPhone(db model.IPhoneStorage, keyDb model.IKeyStorage) http.Handle
 
 		//установка временного бана после успешного обновления записи
 		userBannedKey := BanKeyPrefix + user.UserId
-		err = keyDb.SetTempIntKey(userBannedKey, 1, model.BanKeyLifeSpan)
+		err = keyDb.SetTempIntKey(userBannedKey, 1, model.C.BanKeyLifeSpan)
 		//сам номер мы сменили успешно, поэтому необычную ошибку я логирую, а пользователю возвращаю сообщение о смене номера
 		if err != nil {
 			log.Printf("attachNewPhone: %s", err.Error())
@@ -356,14 +357,14 @@ func returnTimeoutInString(key string, db model.IKeyStorage) (string, error) {
 func smsSender(user model.SendSmsRequestJson, db model.IKeyStorage) error {
 	userSmsKey := SmsKeyPrefix + user.UserId + ":" + user.PhoneNumber
 	var smsKey int
-	switch model.InProduction {
+	switch model.C.InProduction {
 	case true:
 		rand.Seed(time.Now().UnixNano())
 		smsKey = helpers.RandomInRange(10000, 1000)
 	case false:
 		smsKey = defaultSmsKey
 	}
-	err := db.SetTempIntKey(userSmsKey, smsKey, model.SmsKeyLifeSpan)
+	err := db.SetTempIntKey(userSmsKey, smsKey, model.C.SmsKeyLifeSpan)
 	if err != nil {
 		return fmt.Errorf("server:smsSender %s", err.Error())
 	}
